@@ -1,0 +1,24 @@
+# Explicit opt-in isolated/local OpenSearch. No existing ChatForum volumes are reused.
+# node scripts/chatforum-compose.cjs search-test up (loopback port 39201, not production 39200)
+services:
+  forum-search:
+    profiles: [forum-search]
+    image: opensearchproject/opensearch:3.9.0
+    environment:
+      discovery.type: single-node
+      bootstrap.memory_lock: "true"
+      DISABLE_INSTALL_DEMO_CONFIG: "true"
+      DISABLE_SECURITY_PLUGIN: "true"
+      OPENSEARCH_JAVA_OPTS: "-Xms512m -Xmx512m"
+    ulimits:
+      memlock: { soft: -1, hard: -1 }
+      nofile: { soft: 65536, hard: 65536 }
+    ports: ["127.0.0.1:${FORUM_SEARCH_HOST_PORT:-39200}:9200"]
+    volumes: [forum_search_data:/usr/share/opensearch/data]
+    healthcheck:
+      test: [CMD-SHELL, "curl -fsS http://localhost:9200/_cluster/health >/dev/null"]
+      interval: 5s
+      timeout: 3s
+      retries: 60
+volumes:
+  forum_search_data:

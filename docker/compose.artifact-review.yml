@@ -1,0 +1,9 @@
+# Explicit opt-in only. The API shares a private job queue with a host operator,
+# never the Docker socket, host files, ports, or container-control permissions.
+# Keep the three existing production compose files and forum-search profile.
+services:
+  chatforum:
+    environment:
+      ARTIFACT_REVIEW_QUEUE_DIR: /app/artifact-review
+    volumes:
+      - ../.local/artifact-review-queue:/app/artifact-review

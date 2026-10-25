@@ -1,0 +1,22 @@
+# Opt-in production read models. Combine with docker-compose.yml and compose.forum-search.yml.
+# Search has only a loopback host port; no public Nginx/API path proxies it.
+services:
+  chatforum:
+    environment:
+      FORUM_EVENTS_WORKER_ENABLED: "true"
+      FORUM_EVENTS_POLL_MS: "100"
+      FORUM_EVENTS_BATCH_SIZE: "50"
+      FORUM_SEARCH_ENABLED: "true"
+      FORUM_SEARCH_URL: http://forum-search:9200
+      FORUM_SEARCH_ALLOW_INSECURE: "true"
+      FORUM_VIEW_AGGREGATION_ENABLED: "true"
+      FORUM_VIEW_WORKER_ENABLED: "true"
+      FORUM_HOT_PRECOMPUTE_ENABLED: "true"
+      FORUM_EVENT_RETENTION_ENABLED: "true"
+      NODE_OPTIONS: --max-http-header-size=65536
+    depends_on:
+      forum-search:
+        condition: service_healthy
+  forum-search:
+    restart: unless-stopped
+    mem_limit: 1536m

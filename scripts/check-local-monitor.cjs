@@ -1,0 +1,37 @@
+// Isolated browser regression. Never reads production credentials or sends model requests.
+const path=require('node:path'),assert=require('node:assert/strict'),{randomUUID,randomBytes}=require('node:crypto');
+const root=path.resolve(__dirname,'..'),backend=path.join(root,'backend');
+process.env.DATABASE_URL='mysql://root:chatforum-test-only@127.0.0.1:33316/chatforum_test';
+process.env.REDIS_HOST='127.0.0.1';process.env.REDIS_PORT='36386';process.env.REDIS_PASSWORD='';
+process.chdir(backend);
+const {PrismaService}=require(path.join(backend,'dist/src/common/prisma.service'));
+const {RedisService}=require(path.join(backend,'dist/src/common/redis.service'));
+const {MonitorService}=require(path.join(backend,'dist/src/modules/monitor/monitor.service'));
+const {recordUsageSnapshot}=require(path.join(backend,'dist/src/common/usage-ledger'));
+const bcrypt=require(path.join(backend,'node_modules/bcryptjs')),{chromium}=require('playwright');
+(async()=>{const db=new PrismaService(),redis=new RedisService();await db.$connect();redis.onModuleInit();
+const service=new MonitorService(db,redis),users=[],password=randomBytes(24).toString('base64url'),suffix=randomUUID().slice(0,8);
+let server,browser;const sourceId='browser-'+suffix;
+try{for(const [name,role]of[['本机管理员','ADMIN'],['测试读者','USER']]){const u=await db.user.create({data:{username:name+'_'+suffix,email:role.toLowerCase()+suffix+'@example.test',password:await bcrypt.hash(password,4),role}});users.push(u);}
+await recordUsageSnapshot(db,{scope:'CHAT',sourceId,userId:users[1].id,createdAt:new Date()},{steps:[{model:'fixture-model',stage:'answer',kind:'chat',inputTokens:18400,outputTokens:3200,cachedInputTokens:6000,reasoningTokens:500,costCny:null,status:'ok',latencyMs:2350,estimatedInputTokens:19000}]});
+await db.loginEvent.create({data:{userId:users[1].id,outcome:'SUCCESS',channel:'WEB',ip:'127.0.0.1',userAgent:'Synthetic browser fixture'}});
+service.backfillState='complete';server=service.createApp(8092).listen(8092,'127.0.0.1');
+browser=await chromium.launch({channel:'msedge',headless:true});const page=await browser.newPage({viewport:{width:1440,height:1000}});const errors=[];page.on('pageerror',e=>errors.push(e.message));
+await page.goto('http://127.0.0.1:8092');await page.locator('#email').fill(users[0].email);await page.locator('#password').fill(password);await page.locator('#login-form button').click();
+await page.locator('#total-tokens').filter({hasText:/[0-9]/}).waitFor();assert.equal(await page.locator('#error').isVisible(),false);
+await page.screenshot({path:path.join(root,'.local/monitor-overview-desktop.png'),fullPage:true});
+await page.getByRole('button',{name:'用户账号',exact:false}).click();await page.locator('#search').fill(users[1].username);
+const filtered=page.waitForResponse(r=>r.url().includes('/ops-api/users?')&&new URL(r.url()).searchParams.get('q')===users[1].username);
+await page.locator('#search-form button').click();await filtered;await page.waitForFunction(()=>document.querySelectorAll('#table tbody tr').length===1);
+await page.locator('#table').getByText(users[1].username,{exact:false}).waitFor();
+await page.getByRole('button',{name:'禁用',exact:true}).click();await page.locator('#confirmation').fill(users[1].username);await page.locator('#confirm-action').click();
+await page.getByRole('button',{name:'恢复',exact:true}).waitFor();assert.equal((await db.user.findUnique({where:{id:users[1].id}})).status,'BANNED');
+await page.getByRole('button',{name:'恢复',exact:true}).click();await page.locator('#confirmation').fill(users[1].username);await page.locator('#confirm-action').click();await page.getByRole('button',{name:'禁用',exact:true}).waitFor();
+await page.getByRole('button',{name:'用量',exact:true}).click();await page.locator('#table').getByText('fixture-model',{exact:false}).waitFor();
+await page.getByRole('button',{name:'登录记录',exact:false}).click();await page.locator('#table').getByText('Synthetic browser fixture',{exact:true}).waitFor();
+await page.getByRole('button',{name:'用量概览',exact:false}).click();await page.locator('#total-tokens').filter({hasText:/[0-9]/}).waitFor();await page.setViewportSize({width:390,height:844});
+await page.screenshot({path:path.join(root,'.local/monitor-overview-mobile.png'),fullPage:true});assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+await page.getByRole('button',{name:'退出',exact:true}).click();await page.locator('#login').waitFor();assert.equal(await page.locator('#password').inputValue(),'');assert.deepEqual(errors,[]);
+console.log('PASS monitor desktop/mobile layout, login/logout, navigation, usage filter, disable/restore and no page errors (fixtures only)');
+}finally{await browser?.close();if(server)await new Promise(r=>server.close(r));await service.onModuleDestroy();
+await db.modelUsageEntry.deleteMany({where:{sourceId}});await db.operationLog.deleteMany({where:{userId:{in:users.map(u=>u.id)}}});await db.loginEvent.deleteMany({where:{userId:{in:users.map(u=>u.id)}}});await db.user.deleteMany({where:{id:{in:users.map(u=>u.id)}}});redis.onModuleDestroy();await db.$disconnect();}})().catch(e=>{console.error(e.message);process.exitCode=1;});

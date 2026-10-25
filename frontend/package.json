@@ -1,0 +1,56 @@
+{
+  "name": "chatforum-frontend",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "ChatForum 智能对话与社区交流平台 - 前端应用",
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc && vite build",
+    "preview": "vite preview",
+    "test": "node --test test/sse.cjs test/chat-stream.cjs test/api-config.cjs test/registration-validation.cjs test/forum-links.cjs test/forum-experience.cjs test/chat-model-selection.cjs test/chat-navigation.cjs test/code-workspace.cjs test/local-code-files.cjs test/clipboard-files.cjs test/message-attachments.cjs test/request-login.cjs test/direct-messages.cjs test/profile-session.cjs test/community-request-state.cjs test/forum-search-history.cjs test/reading-preferences.cjs test/roleplay-defaults.cjs test/read-refresh-cache.cjs test/forum-feed-cache.cjs test/knowledge-review-removal.cjs test/generation-process.cjs test/response-options.cjs test/web-search-sources.cjs test/artifact-review.cjs test/chat-copy-cleanup.cjs test/ui-copy.cjs test/forum-reports.cjs test/tool-approvals.cjs test/memory-controls.cjs",
+    "lint": "eslint . --ext .vue,.js,.jsx,.cjs,.mjs,.ts,.tsx,.cts,.mts --fix --ignore-path .gitignore",
+    "format": "prettier --write src/"
+  },
+  "dependencies": {
+    "@element-plus/icons-vue": "^2.3.1",
+    "axios": "^1.7.2",
+    "dayjs": "^1.11.11",
+    "dompurify": "3.4.17",
+    "element-plus": "^2.7.2",
+    "highlight.js": "^11.9.0",
+    "js-cookie": "^3.0.5",
+    "lodash-es": "^4.17.21",
+    "marked": "^12.0.2",
+    "pinia": "^2.1.7",
+    "pinia-plugin-persistedstate": "^3.2.1",
+    "vue": "3.5.42",
+    "vue-router": "^4.3.0",
+    "vue-virtual-scroller": "^2.0.0-beta.8"
+  },
+  "overrides": {
+    "source-map-js": "1.2.2"
+  },
+  "devDependencies": {
+    "@types/js-cookie": "^3.0.6",
+    "@types/lodash-es": "^4.17.12",
+    "@typescript-eslint/eslint-plugin": "^7.7.0",
+    "@typescript-eslint/parser": "^7.7.0",
+    "@vitejs/plugin-vue": "^6.0.8",
+    "eslint": "^8.57.0",
+    "eslint-config-prettier": "^9.1.0",
+    "eslint-plugin-prettier": "^5.1.3",
+    "eslint-plugin-vue": "^9.25.0",
+    "prettier": "^3.2.5",
+    "sass": "^1.75.0",
+    "typescript": "^5.4.5",
+    "unplugin-vue-components": "32.1.0",
+    "vite": "^7.3.6",
+    "vue-tsc": "^2.0.6"
+  },
+  "license": "MIT",
+  "author": "PengYao",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Kato-Megumi1/chatforum.git"
+  }
+}

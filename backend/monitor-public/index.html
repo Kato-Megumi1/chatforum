@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light">
+  <title>ChatForum · 本机管理台</title><link rel="icon" href="data:,"><link rel="stylesheet" href="/monitor.css"><script src="/monitor.js" defer></script></head>
+<body>
+  <section id="login" class="login-screen">
+    <form id="login-form" class="login-card">
+      <div class="brand-mark">C<span>F</span></div>
+      <h1>本机管理台</h1>
+      <label for="email">管理员用户名或邮箱</label><input id="email" type="text" autocomplete="username" required maxlength="254" placeholder="admin">
+      <label for="password">密码</label><input id="password" type="password" autocomplete="current-password" required maxlength="256">
+      <p id="login-error" role="alert" class="error"></p><button class="primary" type="submit">登录管理台 <span aria-hidden="true">→</span></button>
+    </form>
+  </section>
+  <div id="workspace" class="workspace" hidden>
+    <aside class="sidebar">
+      <div class="brand"><div class="brand-mark small">C<span>F</span></div><div>ChatForum<small>本机管理台</small></div></div>
+      <nav aria-label="管理导航">
+        <button data-view="overview" aria-current="page"><span aria-hidden="true">◫</span>用量概览</button>
+        <button data-view="users"><span aria-hidden="true">♙</span>用户账号</button>
+        <button data-view="posts"><span aria-hidden="true">▤</span>帖子审核</button>
+        <button data-view="comments"><span aria-hidden="true">☏</span>评论管理</button>
+        <button data-view="reports"><span aria-hidden="true">⚑</span>举报处理</button>
+        <button data-view="report-appeals"><span aria-hidden="true">↶</span>内容申诉</button>
+        <button data-view="forum-pipeline"><span aria-hidden="true">⇄</span>论坛索引与队列</button>
+        <button data-view="knowledge-bases"><span aria-hidden="true">▧</span>知识库概况</button>
+        <button data-view="model-config"><span aria-hidden="true">◇</span>模型配置</button>
+        <button data-view="mail"><span aria-hidden="true">✉</span>邮件服务</button>
+        <button data-view="logins"><span aria-hidden="true">↗</span>登录记录</button>
+        <button data-view="usage"><span aria-hidden="true">≋</span>调用明细</button>
+        <button data-view="failures"><span aria-hidden="true">!</span>异常任务</button>
+        <button data-view="audit"><span aria-hidden="true">☷</span>管理日志</button>
+      </nav>
+      <div class="admin"><span id="admin-name"></span><button id="logout">退出</button></div>
+    </aside>
+    <main>
+      <header class="toolbar"><span class="breadcrumb">管理台 <span>/</span> <b id="breadcrumb">用量概览</b></span><div class="toolbar-right"><span id="updated" class="muted"></span><button id="refresh" class="secondary">刷新</button></div></header>
+      <div class="page">
+        <div class="page-title"><div><h1 id="page-title">用量概览</h1></div>
+          <label class="range-label">统计范围<select id="days"><option value="1">最近 24 小时</option><option value="7">最近 7 天</option><option value="30" selected>最近 30 天</option><option value="90">最近 90 天</option><option value="0">全部记录</option></select></label></div>
+        <p id="error" role="alert" class="error" hidden></p>
+        <section id="overview-view">
+          <div class="metrics">
+            <article class="metric accent"><span>已记录总 token</span><strong id="total-tokens">—</strong></article>
+            <article class="metric"><span>用户账号</span><strong id="total-users">—</strong><small id="inactive-users">—</small></article>
+            <article class="metric"><span>网站成功登录</span><strong id="total-logins">—</strong></article>
+            <article class="metric"><span>模型调用</span><strong id="total-calls">—</strong><small id="failed-tasks">—</small></article>
+          </div>
+          <div class="overview-grid">
+            <article class="panel chart-panel"><div class="panel-head"><div><h2>Token 用量趋势</h2></div><span class="legend"><i></i>已记录 token</span></div><div id="chart" class="chart"></div></article>
+            <article class="panel breakdown"><h2>用量构成</h2><dl><div><dt>输入</dt><dd id="input-tokens">—</dd></div><div><dt>输出</dt><dd id="output-tokens">—</dd></div><div><dt>Embedding</dt><dd id="embedding-tokens">—</dd></div><div class="sub-stat"><dt>输入内缓存命中</dt><dd id="cached-tokens">—</dd></div><div class="sub-stat"><dt>输出内推理 token</dt><dd id="reasoning-tokens">—</dd></div><div class="cost-row"><dt>已知费率估算</dt><dd id="cost">—</dd></div></dl></article>
+          </div>
+          <article class="panel"><div class="panel-head"><h2>模型分布</h2></div><div id="models" class="table-wrap"></div></article>
+          <div id="coverage" class="notice" role="status"></div>
+        </section>
+        <section id="list-view" hidden class="panel list-panel">
+          <div class="list-filters">
+            <form id="search-form"><input id="search" type="search" placeholder="搜索用户名、邮箱或 ID" aria-label="搜索账号"><button class="secondary">搜索</button></form>
+            <select id="status-filter" aria-label="状态筛选"><option value="">全部账号状态</option><option value="ACTIVE">正常</option><option value="BANNED">已禁用</option><option value="INACTIVE">未启用</option></select>
+            <select id="login-filter" aria-label="登录结果筛选" hidden><option value="">全部登录结果</option><option value="SUCCESS">登录成功</option><option value="REGISTERED">注册登录</option><option value="FAILED">登录失败</option></select>
+            <select id="forum-status" aria-label="内容状态筛选" hidden></select>
+            <input id="post-filter" type="number" min="1" placeholder="按帖子 ID 查评论" aria-label="按帖子 ID 查评论" hidden>
+            <span id="user-filter" class="filter-label" hidden></span><button id="clear-user" class="secondary" hidden>清除用户筛选</button>
+          </div>
+          <div id="table" class="table-wrap"></div><div class="pagination"><span id="page-info" class="muted"></span><div><button id="prev" class="secondary">上一页</button><button id="next" class="secondary">下一页</button></div></div>
+        </section>
+        <section id="forum-pipeline-view" hidden class="panel">
+          <h2>搜索发布与事件投递</h2>
+          <div id="forum-pipeline-summary" class="notice" role="status"></div>
+          <div id="forum-pipeline-actions" class="dialog-actions"></div>
+          <div id="forum-pipeline-queues" class="table-wrap"></div>
+          <div id="forum-pipeline-dead" class="table-wrap"></div>
+        </section>
+        <section id="mail-view" hidden class="settings-grid">
+          <article class="panel"><h2>发信邮箱</h2>
+            <form id="smtp-form" class="settings-form">
+              <label class="check-label"><input id="smtp-enabled" type="checkbox">启用邮箱验证码服务</label>
+              <div class="field-row"><label>SMTP 服务器<input id="smtp-host" placeholder="smtp.example.com" maxlength="253" required autocomplete="off"></label><label>端口<select id="smtp-port"><option value="465">465 · TLS</option><option value="587">587 · STARTTLS</option></select></label></div>
+              <label>邮箱账号<input id="smtp-user" maxlength="254" required autocomplete="off"></label>
+              <label>发件邮箱<input id="smtp-from" type="email" maxlength="254" required autocomplete="off"></label>
+              <label>SMTP 授权码<input id="smtp-password" type="password" maxlength="512" autocomplete="new-password" placeholder="输入邮箱提供商生成的授权码"></label>
+              <p id="smtp-secret-status" class="muted tiny"></p><button type="submit" class="primary">保存邮件配置</button>
+            </form>
+          </article>
+          <article class="panel"><h2>测试发送</h2>
+            <form id="smtp-test-form" class="settings-form"><label>接收测试的邮箱<input id="smtp-test-to" type="email" maxlength="254" required autocomplete="off" aria-describedby="smtp-test-status"></label><button type="submit" class="secondary" disabled>发送测试邮件</button><p id="smtp-test-status" class="muted tiny" role="status"></p></form>
+          </article>
+        </section>
+        <section id="model-config-view" hidden class="panel">
+          <h2>对话模型</h2>
+          <form id="models-form" class="settings-form"><div id="model-options" class="model-options"></div><label>默认模型<select id="default-model"></select></label><button type="submit" class="primary">保存模型配置</button></form>
+          <p id="settings-lock" class="error" role="alert"></p>
+        </section>
+      </div>
+    </main>
+  </div>
+  <dialog id="confirm-dialog"><form id="confirm-form"><h2 id="confirm-title"></h2><p id="confirm-description"></p><label id="confirmation-label" for="confirmation">输入完整用户名以确认</label><input id="confirmation" autocomplete="off" required><label id="decision-reason-label" for="decision-reason" hidden>处理说明<textarea id="decision-reason" rows="4" maxlength="2000"></textarea></label><p id="confirm-error" role="alert" class="error"></p><div class="dialog-actions"><button type="button" id="cancel-action" class="secondary">取消</button><button id="confirm-action" class="primary" type="submit">确认操作</button></div></form></dialog>
+  <dialog id="report-context-dialog"><form method="dialog"><h2 id="report-context-title">举报内容</h2><pre id="report-context-text"></pre><button type="submit" class="secondary">关闭</button></form></dialog>
+  <div id="toast" class="toast" role="status" hidden></div>
+</body></html>

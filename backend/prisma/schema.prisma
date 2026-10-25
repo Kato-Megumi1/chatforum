@@ -1,0 +1,1110 @@
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// 用户表
+model User {
+  id        Int      @id @default(autoincrement())
+  email     String   @unique
+  username  String   @unique
+  password  String
+  authVersion Int    @default(0)
+  avatar    String?
+  bio       String?
+  phone     String?  @unique
+  role      Role     @default(USER)
+  status    Status   @default(ACTIVE)
+  level     Int      @default(1)
+  points    Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // 关系
+  conversations   Conversation[]
+  posts          Post[]
+  comments       Comment[]
+  likes          Like[]
+  commentLikes   CommentLike[]
+  favorites      Favorite[]
+  followers      Follow[] @relation("follower")
+  following      Follow[] @relation("following")
+  notifications  Notification[]
+  forumSubscriptions ForumSubscription[]
+  reports        Report[]
+  promptTemplates PromptTemplate[]
+  operationLogs  OperationLog[]
+  loginEvents LoginEvent[]
+  modelUsage ModelUsageEntry[]
+  ownedKnowledgeBases KnowledgeBase[] @relation("KnowledgeBaseOwner")
+  knowledgeBaseAcls KnowledgeBaseAcl[]
+  ownedKnowledgeDocuments KnowledgeBaseDocument[] @relation("KnowledgeDocumentOwner")
+  knowledgeDocumentAcls KnowledgeDocumentAcl[]
+  ragReviewRequests RagReviewTask[] @relation("RagReviewRequester")
+  ragReviewAssignments RagReviewTask[] @relation("RagReviewAssignee")
+  directThreadsLow DirectMessageThread[] @relation("DirectThreadLow")
+  directThreadsHigh DirectMessageThread[] @relation("DirectThreadHigh")
+  directMessages DirectMessage[]
+  directBlocksMade DirectMessageBlock[] @relation("DirectBlockMaker")
+  directBlocksReceived DirectMessageBlock[] @relation("DirectBlockTarget")
+
+  @@map("users")
+}
+
+// User-to-user text only. Never joined to AI conversation or RAG memory.
+model DirectMessageThread {
+  id Int @id @default(autoincrement())
+  userLowId Int
+  userHighId Int
+  initiatorId Int
+  recipientId Int
+  state String @default("PENDING") @db.VarChar(16)
+  lastMessageId BigInt @default(0)
+  lastMessageAt DateTime?
+  lowReadMessageId BigInt @default(0)
+  highReadMessageId BigInt @default(0)
+  lowUnread Int @default(0)
+  highUnread Int @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  userLow User @relation("DirectThreadLow", fields: [userLowId], references: [id], onDelete: Cascade)
+  userHigh User @relation("DirectThreadHigh", fields: [userHighId], references: [id], onDelete: Cascade)
+  messages DirectMessage[]
+  @@unique([userLowId, userHighId])
+  @@index([userLowId, lastMessageId, id])
+  @@index([userHighId, lastMessageId, id])
+  @@index([recipientId, state, lastMessageId, id])
+  @@map("direct_message_threads")
+}
+
+model DirectMessage {
+  id BigInt @id @default(autoincrement())
+  threadId Int
+  senderId Int
+  clientMessageId String @db.VarChar(36)
+  content String @db.Text
+  createdAt DateTime @default(now())
+  thread DirectMessageThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  sender User @relation(fields: [senderId], references: [id], onDelete: Cascade)
+  @@unique([senderId, clientMessageId])
+  @@index([threadId, id])
+  @@index([threadId, senderId, id])
+  @@map("direct_messages")
+}
+
+model DirectMessageBlock {
+  id Int @id @default(autoincrement())
+  blockerId Int
+  blockedId Int
+  createdAt DateTime @default(now())
+  blocker User @relation("DirectBlockMaker", fields: [blockerId], references: [id], onDelete: Cascade)
+  blocked User @relation("DirectBlockTarget", fields: [blockedId], references: [id], onDelete: Cascade)
+  @@unique([blockerId, blockedId])
+  @@index([blockedId, blockerId])
+  @@map("direct_message_blocks")
+}
+
+// Local operations only. No passwords, prompts, raw responses or API credentials.
+model LoginEvent {
+  id Int @id @default(autoincrement())
+  userId Int?
+  outcome String @db.VarChar(24)
+  channel String @db.VarChar(24)
+  ip String? @db.VarChar(64)
+  userAgent String? @db.VarChar(190)
+  createdAt DateTime @default(now())
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+  @@index([createdAt, id])
+  @@index([userId, createdAt])
+  @@map("login_events")
+}
+
+// Independent of conversation lifecycle; deleting chat history must not erase usage.
+model ModelUsageEntry {
+  id Int @id @default(autoincrement())
+  sourceKey String @unique @db.VarChar(150)
+  sourceId String @db.VarChar(80)
+  scope String @db.VarChar(16)
+  userId Int?
+  model String @db.VarChar(100)
+  kind String @db.VarChar(16)
+  stage String @db.VarChar(80)
+  callCount Int @default(1)
+  inputTokens Int?
+  outputTokens Int?
+  cachedInputTokens Int @default(0)
+  reasoningTokens Int @default(0)
+  estimatedInputTokens Int @default(0)
+  costCny Decimal? @db.Decimal(20, 8)
+  latencyMs Int @default(0)
+  outcome String @db.VarChar(16)
+  quality String @db.VarChar(24)
+  createdAt DateTime @default(now())
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+  @@index([userId, createdAt])
+  @@index([createdAt, id])
+  @@index([scope, sourceId])
+  @@map("model_usage_entries")
+}
+
+// 对话会话表
+model ChatRun {
+  id             String   @id @default(uuid()) @db.VarChar(36)
+  userId         Int
+  conversationId Int
+  requestId      String   @db.VarChar(36)
+  status         String   @default("QUEUED") @db.VarChar(16)
+  input          Json
+  result         Json?
+  // Server-only partial file output. Never part of result, SSE or public metadata.
+  privateState   Json?
+  error          String?  @db.VarChar(255)
+  usage          Json?
+  workerToken    String?  @db.VarChar(36)
+  leaseUntil     DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  toolSteps ChatToolStep[]
+
+  @@unique([userId, requestId])
+  @@index([status, createdAt])
+  @@map("chat_runs")
+}
+
+// Private tool execution ledger. Never stores provider reasoning or model credentials.
+model ChatToolStep {
+  id String @id @default(uuid()) @db.VarChar(36)
+  runId String @db.VarChar(36)
+  stepKey String @db.Char(64)
+  sequence Int
+  toolName String @db.VarChar(80)
+  effect String @db.VarChar(12)
+  policyVersion String @db.VarChar(40)
+  argsHash String @db.Char(64)
+  arguments Json
+  result Json?
+  state String @db.VarChar(24)
+  sourceEpoch Int
+  authVersion Int
+  workerToken String? @db.VarChar(36)
+  approvedAt DateTime?
+  finishedAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  run ChatRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  @@unique([runId, stepKey])
+  @@index([runId, sequence])
+  @@index([state, updatedAt])
+  @@map("chat_tool_steps")
+}
+
+model Conversation {
+  id        Int      @id @default(autoincrement())
+  title     String
+  isPinned  Boolean  @default(false)
+  memoryEpoch Int @default(0)
+  conversationType String @default("LEGACY") @db.VarChar(16)
+  personaKey String? @db.VarChar(80)
+  personaLabel String? @db.VarChar(80)
+  customPersonaPrompt String? @db.Text
+  sharedMemory Boolean @default(false)
+  userId    Int
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // 关系
+  user     User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages ChatMessage[]
+  runs     ChatRun[]
+  memories ConversationMemory[]
+  episodes ConversationEpisode[]
+  forumQueries ForumQueryCheckpoint[]
+  codingFiles CodingFile[]
+  codingChanges CodingChange[]
+  attachments ChatAttachment[]
+  memoryRebuild MemoryRebuildJob?
+  memoryPins ConversationMemoryPin[]
+  memorySuppressions ConversationMemorySuppression[]
+
+  @@map("conversations")
+}
+
+// Private virtual workspaces. Never paths on the application host; edits require owner approval.
+model CodingFile {
+  id Int @id @default(autoincrement())
+  conversationId Int
+  path String @db.VarChar(180)
+  content String @db.MediumText
+  revision Int @default(1)
+  bytes Int
+  updatedAt DateTime @updatedAt
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  @@unique([conversationId, path])
+  @@map("coding_files")
+}
+
+// Private originals, never public /uploads URLs. Binary content is only fetched by ID after ACL.
+model ChatAttachment {
+  id Int @id @default(autoincrement())
+  conversationId Int
+  name String @db.VarChar(180)
+  kind String @db.VarChar(12)
+  mime String @db.VarChar(100)
+  bytes Int
+  data Bytes @db.LongBlob
+  text String @db.MediumText
+  pages Json
+  pageCount Int @default(0)
+  needsVision Boolean @default(false)
+  createdAt DateTime @default(now())
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  @@unique([conversationId, name])
+  @@map("chat_attachments")
+}
+
+model CodingChange {
+  id Int @id @default(autoincrement())
+  conversationId Int
+  path String @db.VarChar(180)
+  baseRevision Int
+  before String @db.MediumText
+  after String @db.MediumText
+  description String @db.VarChar(240)
+  status String @default("PENDING") @db.VarChar(16)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  @@index([conversationId, status, createdAt])
+  @@map("coding_changes")
+}
+
+// On-demand forum observations, isolated per conversation. Not a background subscription.
+model ForumQueryCheckpoint {
+  conversationId Int
+  filterKey String @db.VarChar(64)
+  queriedAt DateTime
+  snapshot Json
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  @@id([conversationId, filterKey])
+  @@index([conversationId, queriedAt])
+  @@map("forum_query_checkpoints")
+}
+
+// Durable outbox. No post/user FK: hard deletion must leave a deliverable tombstone.
+// id is an identity, NOT a committed high-water cursor; deliveries are claimed individually.
+model ForumEvent {
+  id BigInt @id @default(autoincrement())
+  eventKey String @unique @db.VarChar(36)
+  kind String @db.VarChar(48)
+  postId Int
+  postRevision Int
+  actorId Int?
+  payloadJson Json
+  occurredAt DateTime @db.DateTime(3)
+  createdAt DateTime @default(now()) @db.DateTime(3)
+  deliveries ForumEventDelivery[]
+  @@index([postId, id])
+  @@index([createdAt, id])
+  @@map("forum_events")
+}
+
+model ForumEventDelivery {
+  eventId BigInt
+  consumer String @db.VarChar(80)
+  state String @default("PENDING") @db.VarChar(16)
+  attempts Int @default(0)
+  availableAt DateTime @default(now()) @db.DateTime(3)
+  leaseToken String? @db.VarChar(36)
+  leaseUntil DateTime? @db.DateTime(3)
+  errorCode String? @db.VarChar(64)
+  completedAt DateTime? @db.DateTime(3)
+  createdAt DateTime @default(now()) @db.DateTime(3)
+  updatedAt DateTime @updatedAt @db.DateTime(3)
+  event ForumEvent @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  @@id([eventId, consumer])
+  @@index([consumer, state, availableAt, eventId], map: "forum_delivery_ready")
+  @@index([state, leaseUntil, eventId], map: "forum_delivery_expired")
+  @@map("forum_event_deliveries")
+}
+
+// Rebuildable read-model/lease state, never an authoritative forum document.
+model ForumReadModelState {
+  key String @id @db.VarChar(120)
+  payloadJson Json?
+  status String @default("IDLE") @db.VarChar(24)
+  cursor BigInt?
+  metadataJson Json?
+  updatedAt DateTime @updatedAt @db.DateTime(3)
+  @@map("forum_read_model_states")
+}
+
+model ForumInteractionBucket {
+  postId Int
+  hour DateTime @db.DateTime(3)
+  viewDelta BigInt @default(0)
+  likeDelta Int @default(0)
+  commentDelta Int @default(0)
+  updatedAt DateTime @updatedAt @db.DateTime(3)
+  @@id([postId, hour])
+  @@index([hour, postId])
+  @@map("forum_interaction_buckets")
+}
+
+// Batch identity and hash make Redis replay safe; this is not a per-viewer history.
+model ForumViewBatch {
+  id String @id @db.VarChar(100)
+  payloadHash String @db.VarChar(64)
+  postId Int?
+  count Int @default(0)
+  bucketStart DateTime? @db.DateTime(3)
+  createdAt DateTime @default(now()) @db.DateTime(3)
+  @@index([createdAt])
+  @@map("forum_view_batches")
+}
+
+model ForumSubscription {
+  id Int @id @default(autoincrement())
+  userId Int
+  conversationId Int?
+  filterKey String @db.VarChar(64)
+  kind String @db.VarChar(24)
+  filtersJson Json
+  categoryId Int?
+  postId Int?
+  anchorKey String? @db.VarChar(8)
+  enabled Boolean @default(true)
+  cooldownSeconds Int @default(3600)
+  startedAt DateTime @default(now()) @db.DateTime(3)
+  createdAt DateTime @default(now()) @db.DateTime(3)
+  updatedAt DateTime @updatedAt @db.DateTime(3)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  deliveries ForumSubscriptionDelivery[]
+  @@unique([userId, filterKey])
+  @@index([enabled, kind, categoryId, anchorKey, id], map: "forum_subscription_candidates")
+  @@index([enabled, postId, id])
+  @@map("forum_subscriptions")
+}
+
+model ForumSubscriptionDelivery {
+  id BigInt @id @default(autoincrement())
+  subscriptionId Int
+  windowStart DateTime @db.DateTime(3)
+  notificationId Int?
+  userId Int
+  count Int @default(0)
+  postIdsJson Json
+  createdAt DateTime @default(now()) @db.DateTime(3)
+  updatedAt DateTime @updatedAt @db.DateTime(3)
+  subscription ForumSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  @@unique([subscriptionId, windowStart])
+  @@index([userId, createdAt])
+  @@map("forum_subscription_deliveries")
+}
+
+// Source-addressed dialogue excerpts, not canonical facts or cross-user profiles.
+model ConversationEpisode {
+  conversationId Int
+  personaKey String @db.VarChar(80)
+  lastMessageId Int
+  text String @db.Text
+  sourceIds Json
+  evidence Json?
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@id([conversationId, personaKey, lastMessageId])
+  @@map("conversation_episodes")
+}
+
+// Derived, persona-scoped conversation state and extractive summary. Original messages remain authoritative.
+model ConversationMemory {
+  conversationId Int
+  personaKey String @db.VarChar(80)
+  revision String @db.VarChar(64)
+  snapshot Json
+  updatedAt DateTime @updatedAt
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@id([conversationId, personaKey])
+  @@map("conversation_memories")
+}
+
+// Bounded, leased rebuild of derived excerpts; not a model job or source of truth.
+model MemoryRebuildJob {
+  conversationId Int @id
+  userId Int
+  personaKey String @db.VarChar(80)
+  epoch Int
+  status String @default("QUEUED") @db.VarChar(16)
+  workerToken String? @db.VarChar(36)
+  leaseUntil DateTime?
+  nextAttemptAt DateTime @default(now())
+  attempts Int @default(0)
+  errorCode String? @db.VarChar(40)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  @@index([status, nextAttemptAt, leaseUntil])
+  @@map("memory_rebuild_jobs")
+}
+
+// Explicit user pins reference immutable source messages, never canonical claims.
+model ConversationMemoryPin {
+  id Int @id @default(autoincrement())
+  userId Int
+  conversationId Int
+  personaKey String @db.VarChar(80)
+  sourceIds Json
+  sourceHash String @db.Char(64)
+  text String @db.Text
+  revision Int @default(1)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  @@unique([conversationId, sourceHash])
+  @@index([userId, conversationId, id])
+  @@map("conversation_memory_pins")
+}
+
+// Forgetting derived memory leaves the original visible chat untouched.
+model ConversationMemorySuppression {
+  id Int @id @default(autoincrement())
+  userId Int
+  conversationId Int
+  messageId Int
+  createdAt DateTime @default(now())
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  message ChatMessage @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  @@unique([conversationId, messageId])
+  @@index([userId, conversationId])
+  @@map("conversation_memory_suppressions")
+}
+
+// 对话消息表
+model ChatMessage {
+  id        Int            @id @default(autoincrement())
+  role      ChatRole
+  content   String         @db.LongText
+  reasoningContent String? @db.LongText
+  memorySuppressions ConversationMemorySuppression[]
+  ragMetadata Json?
+  tokens    Int?
+  conversationId Int
+  createdAt DateTime       @default(now())
+
+  // 关系
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, createdAt, id])
+  @@map("chat_messages")
+}
+
+// 帖子表
+model Post {
+  id          Int         @id @default(autoincrement())
+  title       String
+  content     String         @db.LongText
+  contentFormat String       @default("markdown") @db.VarChar(16)
+  categoryId  Int
+  userId      Int
+  viewCount   Int         @default(0)
+  likeCount   Int         @default(0)
+  commentCount Int        @default(0)
+  revision    Int         @default(1)
+  isTop       Boolean     @default(false)
+  isEssence   Boolean     @default(false)
+  status      PostStatus  @default(PENDING)
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  // 关系
+  user       User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  category   Category    @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  comments   Comment[]
+  likes      Like[]
+  favorites  Favorite[]
+  tags       PostTag[]
+  reports    Report[]
+  views      PostViewReceipt[]
+
+  @@index([status, createdAt, id])
+  @@index([status, categoryId, createdAt, id])
+  @@map("posts")
+}
+
+// One server-signed visitor/user identity per post, not an independent-visitor metric.
+model PostViewReceipt {
+  postId Int
+  viewerHash String @db.VarChar(64)
+  viewedAt DateTime
+  post Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+  @@id([postId, viewerHash])
+  @@index([viewedAt])
+  @@map("post_view_receipts")
+}
+
+// 分类表
+model Category {
+  id          Int       @id @default(autoincrement())
+  name        String    @unique
+  description String?
+  order       Int       @default(0)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  // 关系
+  posts       Post[]
+
+  @@map("categories")
+}
+
+// 标签表
+model Tag {
+  id        Int       @id @default(autoincrement())
+  name      String    @unique
+  color     String?
+  createdAt DateTime  @default(now())
+
+  // 关系
+  posts     PostTag[]
+
+  @@map("tags")
+}
+
+// 帖子-标签关联表
+model PostTag {
+  id     Int  @id @default(autoincrement())
+  postId Int
+  tagId  Int
+
+  // 关系
+  post   Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+  tag    Tag  @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@unique([postId, tagId])
+  @@map("post_tags")
+}
+
+// 评论表
+model Comment {
+  id        Int       @id @default(autoincrement())
+  content   String @db.Text
+  postId    Int
+  userId    Int
+  parentId  Int?
+  likeCount Int       @default(0)
+  status    CommentStatus @default(ACTIVE)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  // 关系
+  post      Post       @relation(fields: [postId], references: [id], onDelete: Cascade)
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  parent    Comment?   @relation("CommentReplies", fields: [parentId], references: [id], onDelete: Cascade)
+  replies   Comment[]  @relation("CommentReplies")
+  likes     CommentLike[]
+
+  @@index([postId, parentId, status, createdAt])
+  @@index([postId, status, createdAt, id])
+  @@map("comments")
+}
+
+// 点赞表
+model Like {
+  id        Int       @id @default(autoincrement())
+  userId    Int
+  postId    Int
+  createdAt DateTime  @default(now())
+
+  // 关系
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  post      Post      @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, postId])
+  @@map("likes")
+}
+
+// 评论点赞表
+model CommentLike {
+  id        Int       @id @default(autoincrement())
+  userId    Int
+  commentId Int
+  createdAt DateTime  @default(now())
+
+  // 关系
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  comment   Comment   @relation(fields: [commentId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, commentId])
+  @@map("comment_likes")
+}
+
+// 收藏表
+model Favorite {
+  id        Int       @id @default(autoincrement())
+  userId    Int
+  postId    Int
+  createdAt DateTime  @default(now())
+
+  // 关系
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  post      Post      @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, postId])
+  @@map("favorites")
+}
+
+// 关注表
+model Follow {
+  id          Int       @id @default(autoincrement())
+  followerId  Int
+  followingId Int
+  createdAt   DateTime  @default(now())
+
+  // 关系
+  follower    User      @relation("follower", fields: [followerId], references: [id], onDelete: Cascade)
+  following   User      @relation("following", fields: [followingId], references: [id], onDelete: Cascade)
+
+  @@unique([followerId, followingId])
+  @@index([followerId, id])
+  @@index([followingId, id])
+  @@map("follows")
+}
+
+// 消息通知表
+model Notification {
+  relatedReportId Int?
+  id         Int               @id @default(autoincrement())
+  userId     Int
+  type       NotificationType
+  title      String
+  content    String?
+  relatedId  Int?
+  relatedCommentId Int?
+  isRead     Boolean           @default(false)
+  createdAt  DateTime          @default(now())
+
+  // 关系
+  user       User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isRead, createdAt, id])
+  @@index([userId, createdAt, id])
+
+  @@map("notifications")
+}
+
+// 举报表
+model Report {
+  id          Int           @id @default(autoincrement())
+  reporterId  Int
+  type        ReportType
+  targetId    Int
+  postId      Int?
+  reason      String @db.Text
+  status      ReportStatus  @default(PENDING)
+  createdAt   DateTime      @default(now())
+  commentId Int?
+  targetUserId Int?
+  targetRevision Int @default(1)
+  targetUpdatedAt DateTime?
+  revision Int @default(1)
+  clientRequestId String? @db.VarChar(36)
+  decision String? @db.VarChar(16)
+  decisionReason String? @db.Text
+  decidedById Int?
+  decidedAt DateTime?
+
+  // 关系
+  reporter    User          @relation(fields: [reporterId], references: [id], onDelete: Cascade)
+  post        Post?         @relation(fields: [postId], references: [id], onDelete: SetNull)
+  appeal ReportAppeal?
+
+  @@unique([reporterId, clientRequestId])
+  @@index([reporterId, createdAt, id])
+  @@index([targetUserId, createdAt, id])
+  @@index([status, createdAt, id])
+  @@map("reports")
+}
+
+model ReportAppeal {
+  id Int @id @default(autoincrement())
+  reportId Int @unique
+  appellantId Int
+  reason String @db.Text
+  status String @default("PENDING") @db.VarChar(16)
+  revision Int @default(1)
+  decisionReason String? @db.Text
+  decidedById Int?
+  decidedAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  report Report @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  @@index([appellantId, createdAt, id])
+  @@index([status, createdAt, id])
+  @@map("report_appeals")
+}
+
+// Prompt 模板表
+model PromptTemplate {
+  id          Int       @id @default(autoincrement())
+  name        String    @unique
+  description String?
+  content     String
+  userId      Int?
+  isPublic    Boolean   @default(false)
+  createdAt   DateTime  @default(now())
+
+  // 关系
+  user        User?     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("prompt_templates")
+}
+
+// 系统配置表
+model SystemConfig {
+  id        Int       @id @default(autoincrement())
+  key       String    @unique
+  value     String
+  type      String    @default("string")
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@map("system_configs")
+}
+
+// 操作日志表
+model OperationLog {
+  id        Int       @id @default(autoincrement())
+  userId    Int?
+  action    String
+  module    String
+  details   String?
+  ip        String?
+  createdAt DateTime  @default(now())
+
+  // 关系
+  user      User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@map("operation_logs")
+}
+
+// 知识库表
+model KnowledgeBase {
+  id              Int                      @id @default(autoincrement())
+  name            String                   @unique
+  description     String?
+  embeddingApiKey String?
+  embeddingApiBase String?
+  embeddingModel  String                   @default("text-embedding-3-small")
+  chunkSize       Int                      @default(500)
+  chunkOverlap    Int                      @default(50)
+  ownerId         Int?
+  visibility      KnowledgeVisibility      @default(PRIVATE)
+  activeIndexVersion Int?
+  candidateIndexVersion Int?
+  indexCanaryPercent Int                    @default(0)
+  minConfidence   Float                    @default(0.55)
+  revision        Int                      @default(0)
+  createdAt       DateTime                 @default(now())
+  updatedAt       DateTime                 @updatedAt
+  documents       KnowledgeBaseDocument[]
+  owner           User?                    @relation("KnowledgeBaseOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+  acls            KnowledgeBaseAcl[]
+  indexVersions   RagIndexVersion[]
+  chunks          KnowledgeChunk[]
+  reviewTasks     RagReviewTask[]
+
+  @@index([ownerId])
+  @@index([visibility])
+
+  @@map("knowledge_bases")
+}
+
+model KnowledgeBaseAcl {
+  id              Int                 @id @default(autoincrement())
+  knowledgeBaseId Int
+  userId          Int
+  permission      KnowledgePermission @default(READ)
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+  knowledgeBase   KnowledgeBase       @relation(fields: [knowledgeBaseId], references: [id], onDelete: Cascade)
+  user            User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([knowledgeBaseId, userId])
+  @@index([userId, permission])
+  @@map("knowledge_base_acls")
+}
+
+// 知识库文档表
+model KnowledgeBaseDocument {
+  id              Int            @id @default(autoincrement())
+  logicalId       String         @default(uuid())
+  version         Int            @default(1)
+  isCurrent       Boolean        @default(true)
+  isDeleted       Boolean        @default(false)
+  fileName        String
+  fileType        String
+  mimeType        String?
+  fileSize        Int
+  filePath        String
+  checksum        String?
+  chunkCount      Int            @default(0)
+  status          DocStatus      @default(PENDING)
+  knowledgeBaseId Int
+  ownerId         Int?
+  visibility      DocumentVisibility @default(INHERIT)
+  metadata        Json?
+  createdAt       DateTime       @default(now())
+  knowledgeBase   KnowledgeBase  @relation(fields: [knowledgeBaseId], references: [id], onDelete: Cascade)
+  owner           User?          @relation("KnowledgeDocumentOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+  acls            KnowledgeDocumentAcl[]
+  chunks          KnowledgeChunk[]
+
+  @@unique([knowledgeBaseId, logicalId, version])
+  @@index([knowledgeBaseId, isCurrent, status])
+  @@index([ownerId])
+  @@map("knowledge_base_documents")
+}
+
+model KnowledgeDocumentAcl {
+  id         Int                 @id @default(autoincrement())
+  documentId Int
+  userId     Int
+  permission KnowledgePermission @default(READ)
+  createdAt  DateTime            @default(now())
+  updatedAt  DateTime            @updatedAt
+  document   KnowledgeBaseDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  user       User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([documentId, userId])
+  @@index([userId, permission])
+  @@map("knowledge_document_acls")
+}
+
+model RagIndexVersion {
+  id              Int            @id @default(autoincrement())
+  knowledgeBaseId Int
+  version         Int
+  collectionName  String         @unique
+  status          RagIndexStatus @default(BUILDING)
+  workerToken     String?
+  leaseUntil      DateTime?
+  manifest        Json?
+  chunkCount      Int            @default(0)
+  metrics         Json?
+  error           String?        @db.Text
+  graphVersion    String?        @db.VarChar(64)
+  createdAt       DateTime       @default(now())
+  readyAt         DateTime?
+  activatedAt     DateTime?
+  knowledgeBase   KnowledgeBase  @relation(fields: [knowledgeBaseId], references: [id], onDelete: Cascade)
+  chunks          KnowledgeChunk[]
+
+  @@unique([knowledgeBaseId, version])
+  @@index([knowledgeBaseId, status])
+  @@map("rag_index_versions")
+}
+
+model KnowledgeChunk {
+  id              String        @id @default(uuid())
+  knowledgeBaseId Int
+  indexVersionId  Int
+  documentId      Int
+  documentVersion Int
+  chunkIndex      Int
+  content         String        @db.LongText
+  contentHash     String
+  vectorId        String        @unique
+  page            Int?
+  chapter         String?
+  metadata        Json?
+  createdAt       DateTime      @default(now())
+  knowledgeBase   KnowledgeBase @relation(fields: [knowledgeBaseId], references: [id], onDelete: Cascade)
+  indexVersion    RagIndexVersion @relation(fields: [indexVersionId], references: [id], onDelete: Cascade)
+  document        KnowledgeBaseDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  entityMentions  NovelEntityMention[]
+  graphFacts      NovelGraphFact[]
+
+  @@unique([indexVersionId, documentId, documentVersion, chunkIndex], map: "knowledge_chunks_version_chunk_key")
+  @@index([knowledgeBaseId, indexVersionId])
+  @@index([documentId, documentVersion])
+  @@map("knowledge_chunks")
+}
+
+// Entity mentions are retrieval links, NOT assertions that two people have a relationship.
+model NovelEntityMention {
+  id              Int @id @default(autoincrement())
+  indexVersionId  Int
+  graphVersion    String @db.VarChar(64)
+  chunkId         String @db.VarChar(191)
+  entityKey       String @db.VarChar(64)
+  chunk           KnowledgeChunk @relation(fields: [chunkId], references: [id], onDelete: Cascade)
+
+  @@unique([chunkId, graphVersion, entityKey], map: "novel_mentions_chunk_entity_key")
+  @@index([indexVersionId, graphVersion, entityKey], map: "novel_mentions_lookup")
+  @@map("novel_entity_mentions")
+}
+
+// Immutable evidence-window extraction cache. No chat/user memory is written here.
+model NovelGraphScene {
+  id              String @id @db.VarChar(64)
+  indexVersionId  Int
+  graphVersion    String @db.VarChar(64)
+  status          String @db.VarChar(16)
+  workerToken     String? @db.VarChar(36)
+  leaseUntil      DateTime?
+  metrics         Json?
+  createdAt       DateTime @default(now())
+  facts           NovelGraphFact[]
+
+  @@index([indexVersionId, graphVersion, status])
+  @@map("novel_graph_scenes")
+}
+
+// Extracted and model-checked claims, always scoped to their source chapter/index.
+// They remain untrusted retrieval aids; answers must cite the original chunk.
+model NovelGraphFact {
+  id              String @id @default(uuid()) @db.VarChar(36)
+  sceneId         String @db.VarChar(64)
+  indexVersionId  Int
+  chunkId         String @db.VarChar(191)
+  subjectKey      String @db.VarChar(64)
+  predicate       String @db.VarChar(32)
+  targetKey       String? @db.VarChar(64)
+  objectText      String @db.VarChar(200)
+  quote           String @db.Text
+  speakerKey      String? @db.VarChar(64)
+  chapter         String? @db.VarChar(191)
+  scene           NovelGraphScene @relation(fields: [sceneId], references: [id], onDelete: Cascade)
+  chunk           KnowledgeChunk @relation(fields: [chunkId], references: [id], onDelete: Cascade)
+
+  @@index([indexVersionId, subjectKey, targetKey], map: "novel_graph_entity_path")
+  @@index([indexVersionId, targetKey, subjectKey], map: "novel_graph_target_path")
+  @@index([chunkId])
+  @@map("novel_graph_facts")
+}
+
+model LegacyImport {
+  fingerprint String @id @db.VarChar(64)
+  report Json
+  createdAt DateTime @default(now())
+  @@map("legacy_imports")
+}
+
+model RagReviewTask {
+  id               Int             @id @default(autoincrement())
+  knowledgeBaseId  Int
+  requesterId      Int
+  assignedToId     Int?
+  question         String          @db.Text
+  rewrittenQuery   String?         @db.Text
+  reason           String?         @db.Text
+  evidence         Json?
+  confidence       Float
+  status           RagReviewStatus @default(PENDING)
+  expertAnswer     String?         @db.LongText
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+  resolvedAt       DateTime?
+  knowledgeBase    KnowledgeBase   @relation(fields: [knowledgeBaseId], references: [id], onDelete: Cascade)
+  requester        User            @relation("RagReviewRequester", fields: [requesterId], references: [id], onDelete: Cascade)
+  assignedTo       User?           @relation("RagReviewAssignee", fields: [assignedToId], references: [id], onDelete: SetNull)
+
+  @@index([knowledgeBaseId, status, createdAt])
+  @@index([requesterId, status])
+  @@map("rag_review_tasks")
+}
+
+// 枚举类型
+enum DocStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+enum KnowledgeVisibility {
+  PRIVATE
+  SHARED
+  PUBLIC
+}
+
+enum DocumentVisibility {
+  INHERIT
+  PRIVATE
+  PUBLIC
+}
+
+enum KnowledgePermission {
+  READ
+  WRITE
+  ADMIN
+}
+
+enum RagIndexStatus {
+  BUILDING
+  READY
+  ACTIVE
+  ARCHIVED
+  FAILED
+}
+
+enum RagReviewStatus {
+  PENDING
+  IN_REVIEW
+  RESOLVED
+  REJECTED
+}
+
+enum Role {
+  USER
+  MODERATOR
+  ADMIN
+}
+
+enum Status {
+  ACTIVE
+  INACTIVE
+  BANNED
+}
+
+enum ChatRole {
+  SYSTEM
+  USER
+  ASSISTANT
+}
+
+enum PostStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum CommentStatus {
+  ACTIVE
+  DELETED
+}
+
+enum NotificationType {
+  COMMENT
+  LIKE
+  FOLLOW
+  SYSTEM
+}
+
+enum ReportType {
+  POST
+  COMMENT
+  USER
+}
+
+enum ReportStatus {
+  PENDING
+  RESOLVED
+  REJECTED
+}

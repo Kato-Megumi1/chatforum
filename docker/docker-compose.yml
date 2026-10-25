@@ -1,0 +1,77 @@
+# Local production stack. Put secrets in docker/.env (never commit it).
+# New volume namespace; importing an old DB requires a backup first.
+name: chatforum-next
+services:
+  mysql:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?Set MYSQL_ROOT_PASSWORD in docker/.env}
+      MYSQL_DATABASE: chatforum
+      MYSQL_USER: chatforum
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?Set MYSQL_PASSWORD in docker/.env}
+    command: ["--ngram-token-size=2"]
+    volumes: ["mysql_data:/var/lib/mysql"]
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "--silent"]
+      interval: 5s
+      timeout: 3s
+      retries: 40
+    restart: unless-stopped
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes: ["redis_data:/data"]
+    restart: unless-stopped
+  qdrant:
+    image: qdrant/qdrant:v1.19.1
+    volumes: ["qdrant_data:/qdrant/storage"]
+    restart: unless-stopped
+  chatforum:
+    build:
+      context: ..
+      dockerfile: docker/chatforum.Dockerfile
+    ports: ["127.0.0.1:8080:80", "127.0.0.1:8091:8091"]
+    env_file: ["../backend/.env"]
+    environment:
+      NODE_ENV: production
+      CHAT_DEFAULT_MODEL: qwen3.8-max
+      DEEPSEEK_CHAT_ENABLED: "false"
+      LOCAL_MONITOR_ENABLED: "true"
+      LOCAL_MONITOR_BIND: "0.0.0.0"
+      LOCAL_MONITOR_CONTAINER: "true"
+      LOCAL_MONITOR_PORT: "8091"
+      DATABASE_URL: mysql://chatforum:${MYSQL_PASSWORD}@mysql:3306/chatforum
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ""
+      QDRANT_URL: http://qdrant:6333
+      QDRANT_API_KEY: ""
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:?Set JWT_ACCESS_SECRET in docker/.env}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?Set JWT_REFRESH_SECRET in docker/.env}
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:8080,http://localhost:5173}
+    volumes:
+      - ../backend/storage:/app/backend/storage
+      - ../backend/uploads:/app/backend/uploads
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      qdrant:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      start_period: 60s
+    restart: unless-stopped
+  tunnel:
+    image: cloudflare/cloudflared:latest
+    profiles: ["remote"]
+    command: ["tunnel", "--no-autoupdate", "--url", "http://chatforum:80"]
+    depends_on: [chatforum]
+    restart: unless-stopped
+volumes:
+  mysql_data:
+  redis_data:
+  qdrant_data:

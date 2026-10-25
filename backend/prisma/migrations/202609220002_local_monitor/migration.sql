@@ -1,0 +1,41 @@
+CREATE TABLE `login_events` (
+  `id` INTEGER NOT NULL AUTO_INCREMENT,
+  `userId` INTEGER NULL,
+  `outcome` VARCHAR(24) NOT NULL,
+  `channel` VARCHAR(24) NOT NULL,
+  `ip` VARCHAR(64) NULL,
+  `userAgent` VARCHAR(190) NULL,
+  `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  INDEX `login_events_createdAt_id_idx` (`createdAt`, `id`),
+  INDEX `login_events_userId_createdAt_idx` (`userId`, `createdAt`),
+  CONSTRAINT `login_events_userId_fkey` FOREIGN KEY (`userId`) REFERENCES `users` (`id`) ON DELETE SET NULL ON UPDATE CASCADE
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+CREATE TABLE `model_usage_entries` (
+  `id` INTEGER NOT NULL AUTO_INCREMENT,
+  `sourceKey` VARCHAR(150) NOT NULL,
+  `sourceId` VARCHAR(80) NOT NULL,
+  `scope` VARCHAR(16) NOT NULL,
+  `userId` INTEGER NULL,
+  `model` VARCHAR(100) NOT NULL,
+  `kind` VARCHAR(16) NOT NULL,
+  `stage` VARCHAR(80) NOT NULL,
+  `callCount` INTEGER NOT NULL DEFAULT 1,
+  `inputTokens` INTEGER NULL,
+  `outputTokens` INTEGER NULL,
+  `cachedInputTokens` INTEGER NOT NULL DEFAULT 0,
+  `reasoningTokens` INTEGER NOT NULL DEFAULT 0,
+  `estimatedInputTokens` INTEGER NOT NULL DEFAULT 0,
+  `costCny` DECIMAL(20,8) NULL,
+  `latencyMs` INTEGER NOT NULL DEFAULT 0,
+  `outcome` VARCHAR(16) NOT NULL,
+  `quality` VARCHAR(24) NOT NULL,
+  `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  UNIQUE INDEX `model_usage_entries_sourceKey_key` (`sourceKey`),
+  INDEX `model_usage_entries_userId_createdAt_idx` (`userId`, `createdAt`),
+  INDEX `model_usage_entries_createdAt_id_idx` (`createdAt`, `id`),
+  INDEX `model_usage_entries_scope_sourceId_idx` (`scope`, `sourceId`),
+  CONSTRAINT `model_usage_entries_userId_fkey` FOREIGN KEY (`userId`) REFERENCES `users` (`id`) ON DELETE SET NULL ON UPDATE CASCADE
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;

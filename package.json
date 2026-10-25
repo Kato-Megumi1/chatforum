@@ -1,0 +1,28 @@
+{
+  "name": "chatforum",
+  "version": "1.0.0",
+  "description": "小说角色扮演、可追溯 RAG 与社区论坛",
+  "private": true,
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "setup:local": "node scripts/setup-local.cjs",
+    "build": "npm --prefix backend run build && npm --prefix frontend run build",
+    "dev:backend": "npm --prefix backend run start:dev",
+    "dev:frontend": "npm --prefix frontend run dev",
+    "test": "npm --prefix backend test -- --runInBand && npm --prefix frontend test",
+    "check:secrets": "node scripts/check-publication.cjs",
+    "check:staged": "node scripts/check-publication.cjs --staged"
+  },
+  "keywords": [],
+  "author": "PengYao",
+  "license": "MIT",
+  "devDependencies": {
+    "playwright": "1.63.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Kato-Megumi1/chatforum.git"
+  }
+}

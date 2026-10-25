@@ -1,0 +1,27 @@
+# Isolated integration dependencies; no access to your existing database/volumes.
+services:
+  mysql:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: chatforum-test-only
+      MYSQL_DATABASE: chatforum_test
+    ports: ["127.0.0.1:33316:3306"]
+    command: ["--ngram-token-size=2"]
+    volumes: [test_mysql_data:/var/lib/mysql]
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "--silent"]
+      interval: 3s
+      timeout: 3s
+      retries: 40
+  qdrant:
+    image: qdrant/qdrant:v1.19.1
+    ports: ["127.0.0.1:36336:6333"]
+    volumes: [test_qdrant_data:/qdrant/storage]
+  redis:
+    image: redis:7-alpine
+    ports: ["127.0.0.1:36386:6379"]
+    volumes: [test_redis_data:/data]
+volumes:
+  test_mysql_data:
+  test_qdrant_data:
+  test_redis_data:
