@@ -24,6 +24,15 @@ run('isolated MySQL + Qdrant integration', () => {
   const embed = jest.fn(async (texts: string[]) => texts.map(() => [1,0,0,0]));
   const json = jest.fn(async () => ({ intent:'chat', reply:'你好，测试角色。' }));
   const fakeAgent = { executeWithTools: jest.fn(async(..._args: any[])=>({content:'测试回答',toolOutputs:[]})) };
+  // tick admits concurrent background work; completion must be observed through the public run state.
+  async function terminal(jobs: ChatRunService, id: string) {
+    for (let attempt=0; attempt<300; attempt++) {
+      const run=await jobs.get(reader,id);
+      if (!['QUEUED','RUNNING'].includes(run.status)) return run;
+      await new Promise(resolve=>setTimeout(resolve,10));
+    }
+    throw new Error('Synthetic run did not reach a terminal state');
+  }
   beforeAll(async () => {
     if (!process.env.DATABASE_URL?.endsWith('/chatforum_test') || process.env.QDRANT_URL !== 'http://127.0.0.1:36336')
       throw new Error('Integration tests require dedicated chatforum_test database and port 36336');
@@ -85,7 +94,7 @@ run('isolated MySQL + Qdrant integration', () => {
     fakeAgent.executeWithTools.mockImplementationOnce(async()=>{modelsUsed.push(currentChatModel().id);return {content:'已走知识库路径',toolOutputs:[]};});
     const jobs=app.get(ChatRunService);
     const job=await jobs.create(reader,{requestId:randomUUID(),conversationId:conversation.id,question:'你好',mode:'normal',knowledgeBaseId:id,modelId:'qwen3.8-max'});
-    await jobs.tick();
+    await jobs.tick();await terminal(jobs,job.id);
     expect((await jobs.get(reader,job.id)).result).toMatchObject({ragMetadata:{knowledgeBaseId:id,modelId:'qwen3.8-max'}});
     expect(modelsUsed).toEqual(['qwen3.8-max']); // The shared assistant engine remains ACL/model scoped.
     json.mockImplementation(async()=>({intent:'chat',reply:'你好，测试角色。'}));
@@ -100,7 +109,7 @@ run('isolated MySQL + Qdrant integration', () => {
     await request(app.getHttpServer()).post('/api/rag/knowledge-bases').set('Authorization','Bearer '+readerToken)
       .send({name:'Bad owner',ownerId:admin}).expect(400);
     const jobs=app.get(ChatRunService), start=fakeAgent.executeWithTools.mock.calls.length;
-    const job=await jobs.create(reader,input as any);await jobs.tick();
+    const job=await jobs.create(reader,input as any);await jobs.tick();await terminal(jobs,job.id);
     expect(fakeAgent.executeWithTools.mock.calls[start][3]).toBe('qwen3.8-max-0902');
     expect(fakeAgent.executeWithTools.mock.calls[start][9]).toEqual({enable_thinking:false});
     expect((await jobs.get(reader,job.id)).result).toMatchObject({ragMetadata:{modelId:'qwen3.8-max'}});
@@ -213,7 +222,7 @@ run('isolated MySQL + Qdrant integration', () => {
     expect(a.id).toBe(b.id);
     await expect(jobs.create(reader,{...input,requestId:randomUUID()})).rejects.toThrow();
     await expect(jobs.get(outsider,a.id)).rejects.toThrow();
-    await jobs.tick(); await jobs.tick();
+    await jobs.tick(); await jobs.tick();await terminal(jobs,a.id);
     expect((await jobs.get(reader,a.id)).status).toBe('COMPLETED');
     expect(await db.chatMessage.count({where:{conversationId:conversation.id}})).toBe(2);
     const c=await jobs.create(reader,{...input,requestId:randomUUID()});
@@ -260,7 +269,9 @@ run('isolated MySQL + Qdrant integration', () => {
       expect(await db.chatMessage.count({where:{conversationId:conversation.id}})).toBe(0);
       await jobs.cancel(reader,job.id);
     } finally { finish(); await work; }
-    expect(await jobs.get(reader,job.id)).toMatchObject({status:'CANCELLED',result:null});
+    const cancelled=await jobs.get(reader,job.id);
+    expect(cancelled).toMatchObject({status:'CANCELLED',result:{failure:{code:'USER_CANCELLED'}}});
+    expect(cancelled.result).not.toHaveProperty('content');
     expect(await db.chatMessage.count({where:{conversationId:conversation.id}})).toBe(0);
   });
   test('completed RAG results cannot bypass a subsequently revoked document ACL',async()=>{
