@@ -58,7 +58,9 @@ run('isolated MySQL + Qdrant integration', () => {
     await request(app.getHttpServer()).put('/api/rag/knowledge-bases/'+kb).set('Authorization','Bearer '+readerToken)
       .send({visibility:'PUBLIC'}).expect(403);
     await request(app.getHttpServer()).put('/api/users/profile').set('Authorization','Bearer '+readerToken)
-      .send({role:'ADMIN',username:'safe-'+randomUUID()}).expect(200);
+      .send({role:'ADMIN',username:'safe-'+randomUUID().slice(0,12)}).expect(400);
+    await request(app.getHttpServer()).put('/api/users/profile').set('Authorization','Bearer '+readerToken)
+      .send({username:'safe-'+randomUUID().slice(0,12)}).expect(200);
     expect((await db.user.findUnique({where:{id:reader}})).role).toBe('USER');
   });
   test('ordinary users create private KBs and complete upload/build/publish without managing other users KBs', async () => {
@@ -67,7 +69,7 @@ run('isolated MySQL + Qdrant integration', () => {
     const id = made.body.data.id;
     expect(made.body.data).toMatchObject({ownerId:reader,permission:'ADMIN',visibility:'PRIVATE',chatReady:false});
     expect((await rag.listKnowledgeBases({userId:outsider})).some(b=>b.id===id)).toBe(false);
-    const conversation = await db.conversation.create({data:{userId:reader,title:'Private KB test'}});
+    const conversation = await db.conversation.create({data:{conversationType:'ASSISTANT',personaKey:'assistant',userId:reader,title:'Private KB test'}});
     await request(app.getHttpServer()).post('/api/chat/runs').set('Authorization','Bearer '+readerToken)
       .send({requestId:randomUUID(),conversationId:conversation.id,question:'测试',mode:'normal',knowledgeBaseId:id,modelId:'deepseek-v4-pro'}).expect(409);
     await request(app.getHttpServer()).post('/api/rag/knowledge-bases/'+id+'/documents').set('Authorization','Bearer '+readerToken)
@@ -78,20 +80,20 @@ run('isolated MySQL + Qdrant integration', () => {
     await rag.updateKnowledgeBase(id,{visibility:'PUBLIC'},{userId:reader});
     expect((await rag.getKnowledgeBase(id,{userId:outsider}))).toMatchObject({permission:'READ',chatReady:true});
     await expect(rag.updateKnowledgeBase(id,{name:'hijacked'},{userId:outsider})).rejects.toThrow();
-    // Selecting a KB must route through RAG even in normal mode with no persona.
+    // A selected KB keeps the shared assistant identity and the request-scoped model.
     const modelsUsed: string[] = [];
-    json.mockImplementation(async()=>{modelsUsed.push(currentChatModel().id);return {intent:'chat',reply:'已走知识库路径'};});
+    fakeAgent.executeWithTools.mockImplementationOnce(async()=>{modelsUsed.push(currentChatModel().id);return {content:'已走知识库路径',toolOutputs:[]};});
     const jobs=app.get(ChatRunService);
     const job=await jobs.create(reader,{requestId:randomUUID(),conversationId:conversation.id,question:'你好',mode:'normal',knowledgeBaseId:id,modelId:'qwen3.8-max'});
     await jobs.tick();
     expect((await jobs.get(reader,job.id)).result).toMatchObject({ragMetadata:{knowledgeBaseId:id,modelId:'qwen3.8-max'}});
-    expect(modelsUsed).toEqual(['qwen3.8-max']); // Greeting skips the classifier but remains ACL/model scoped.
+    expect(modelsUsed).toEqual(['qwen3.8-max']); // The shared assistant engine remains ACL/model scoped.
     json.mockImplementation(async()=>({intent:'chat',reply:'你好，测试角色。'}));
     await rag.updateKnowledgeBase(id,{visibility:'PRIVATE'},{userId:reader});
     await expect(rag.getKnowledgeBase(id,{userId:outsider})).rejects.toThrow();
   },60000);
   test('browser may select known models but cannot configure providers or forge owner fields', async () => {
-    const conversation=await db.conversation.create({data:{userId:reader,title:'Model selection test'}});
+    const conversation=await db.conversation.create({data:{conversationType:'ASSISTANT',personaKey:'assistant',userId:reader,title:'Model selection test'}});
     const input={requestId:randomUUID(),conversationId:conversation.id,question:'测试',mode:'normal',modelId:'qwen3.8-max'};
     for(const forbidden of [{apiKey:'bad'},{apiBase:'https://attacker.invalid'},{model:'anything'},{modelId:'not-in-menu'}])
       await request(app.getHttpServer()).post('/api/chat/runs').set('Authorization','Bearer '+readerToken).send({...input,...forbidden}).expect(400);
@@ -205,7 +207,7 @@ run('isolated MySQL + Qdrant integration', () => {
   },60000);
   test('durable chat idempotency, single save, owner access and cancellation',async()=>{
     const jobs=app.get(ChatRunService);
-    const conversation=await db.conversation.create({data:{title:'Job test',userId:reader}});
+    const conversation=await db.conversation.create({data:{conversationType:'ASSISTANT',personaKey:'assistant',title:'Job test',userId:reader}});
     const input={requestId:randomUUID(),conversationId:conversation.id,question:'你好',mode:'normal' as const};
     const [a,b]=await Promise.all([jobs.create(reader,input),jobs.create(reader,input)]);
     expect(a.id).toBe(b.id);
@@ -221,7 +223,7 @@ run('isolated MySQL + Qdrant integration', () => {
   });
   test('SSE authenticates, resumes without duplicate saves, and exposes no request input',async()=>{
     const jobs=app.get(ChatRunService);
-    const conversation=await db.conversation.create({data:{title:'SSE fixture',userId:reader}});
+    const conversation=await db.conversation.create({data:{conversationType:'ASSISTANT',personaKey:'assistant',title:'SSE fixture',userId:reader}});
     const job=await jobs.create(reader,{requestId:randomUUID(),conversationId:conversation.id,question:'你好',mode:'normal'});
     await jobs.tick();
     const result=await jobs.get(reader,job.id);
@@ -241,10 +243,12 @@ run('isolated MySQL + Qdrant integration', () => {
     expect(await db.chatMessage.count({where:{conversationId:conversation.id}})).toBe(2);
   });
   test('live partial output is visible before completion; cancel clears it and prevents saving',async()=>{
-    const jobs=app.get(ChatRunService),conversation=await db.conversation.create({data:{title:'Cancel SSE',userId:reader}});
+    const jobs=app.get(ChatRunService),conversation=await db.conversation.create({data:{conversationType:'ASSISTANT',personaKey:'assistant',title:'Cancel SSE',userId:reader}});
     let partialReady:()=>void, finish:()=>void;
     const ready=new Promise<void>(r=>partialReady=r),gate=new Promise<void>(r=>finish=r);
     fakeAgent.executeWithTools.mockImplementationOnce(async(...args:any[])=>{
+      // Allow the documented 120 ms persistence batching interval before observing a partial.
+      await new Promise(resolve=>setTimeout(resolve,150));
       await args[10].onToken('尚未结束的回答'); partialReady(); await gate;
       return {content:'最终回答',toolOutputs:[]};
     });
@@ -260,7 +264,7 @@ run('isolated MySQL + Qdrant integration', () => {
     expect(await db.chatMessage.count({where:{conversationId:conversation.id}})).toBe(0);
   });
   test('completed RAG results cannot bypass a subsequently revoked document ACL',async()=>{
-    const jobs=app.get(ChatRunService),conversation=await db.conversation.create({data:{title:'RAG replay ACL',userId:reader}});
+    const jobs=app.get(ChatRunService),conversation=await db.conversation.create({data:{conversationType:'ASSISTANT',personaKey:'assistant',title:'RAG replay ACL',userId:reader}});
     const book=(await rag.createKnowledgeBase({name:'SSE-ACL-'+randomUUID(),visibility:'SHARED'},{userId:admin})).id;
     await rag.setAcl(book,reader,'READ',{userId:admin});
     const doc=await db.knowledgeBaseDocument.create({data:{knowledgeBaseId:book,ownerId:admin,fileName:'sse.txt',

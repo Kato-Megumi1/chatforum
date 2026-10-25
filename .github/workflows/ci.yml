@@ -57,5 +57,10 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y fonts-noto-cjk
       - run: npm run build
         working-directory: backend
+      - name: Verify runtime output layout
+        run: test -f dist/src/main.js && test -f dist/src/modules/coding/attachment.worker.js
+        working-directory: backend
+      - name: Create disposable test scratch directory
+        run: mkdir -p .local
       - run: npm test -- --runInBand
         working-directory: backend

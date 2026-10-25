@@ -11,6 +11,6 @@ The following are outside the public repository:
 - The obsolete destructive demo seed and its fixed demo passwords; bootstrap is the supported setup path.
 - Unused full-resolution login-background source files; the application uses its existing optimized asset.
 
-The application source is otherwise retained. The public snapshot updates documentation and package licensing metadata, removes obsolete seed commands, and does not deploy or alter the owner's running services.
+The application source is otherwise retained. The public snapshot updates documentation and package licensing metadata, removes obsolete seed commands, and does not deploy or alter the owner's running services. The compiler root is explicit so removing the old seed does not change the runtime output paths; CI creates its own disposable scratch directory, and integration fixtures use the current DTO and conversation-identity contracts.
 
 The owner-provided walkthrough is hosted by the personal GitHub Pages site and linked from the README. That media is not a substitute for an accuracy evaluation or load test.
